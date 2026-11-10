@@ -1,0 +1,56 @@
+test_that("six Cartesian faces retain analytic shape and shared seams", {
+ s <- vc_solid_cartesian(function(x)0,function(x)1+x,function(v)v[1]-v[2],
+   function(v)2+v[1]+2*v[2],c(0,2),n=3,n_u=2,n_v=4)
+ expect_equal(names(s$faces),c("x_min","x_max","y_lower","y_upper","z_lower","z_upper"))
+ expect_equal(s$base,vc_region(function(x)0,function(x)1+x,c(0,2),n=3,n_u=2))
+ for(f in s$faces) {
+ expect_equal(dim(f$x),dim(f$y));expect_equal(dim(f$x),dim(f$z))
+ expect_true(all(is.finite(c(f$x,f$y,f$z))))
+ }
+ expect_equal(s$bottom,s$base$grid$x-s$base$grid$y)
+ expect_equal(s$top,2+s$base$grid$x+2*s$base$grid$y)
+ expect_equal(s$faces$x_min$z[1,],s$bottom[,1])
+ expect_equal(s$faces$x_min$z[5,],s$top[,1])
+ expect_equal(s$faces$x_max$z[1,],s$bottom[,4])
+ expect_equal(s$faces$y_lower$z[1,],s$bottom[1,])
+ expect_equal(s$faces$y_upper$z[5,],s$top[3,])
+ expect_equal(s$faces$x_min$z[,1],s$faces$y_lower$z[,1])
+ expect_equal(s$faces$x_max$z[,3],s$faces$y_upper$z[,4])
+})
+test_that("degenerate solids remain sampled geometry and errors are explicit", {
+ s <- vc_solid_cartesian(function(x)0,function(x)1-x,function(v)0,function(v)0,
+   c(0,1),n=2,n_u=2,n_v=2)
+ expect_true(all(s$faces$x_max$y==0))
+ expect_true(all(s$faces$z_upper$z==0))
+ expect_error(vc_solid_cartesian(function(x)1,function(x)0,sum,sum,c(0,1)),"lower")
+ expect_error(vc_solid_cartesian(function(x)0,function(x)1,function(v)2,function(v)1,c(0,1)),"bottom")
+ expect_error(vc_solid_cartesian(function(x)0,function(x)1,function(v)NA_real_,sum,c(0,1)))
+ expect_error(vc_solid_cartesian(function(x)0,function(x)1,sum,sum,c(0,1),n_v=0))
+ expect_error(vc_solid_cartesian(function(x)0,function(x)1,function(v)-1e308,function(v)1e308,c(0,1)),"width")
+ p <- vc_partition(breaks=c(0,.1,.4,1))
+ a <- vc_solid_cartesian(function(x)0,function(x)1,function(v)0,function(v)1,partition=p,n_u=1,n_v=1)
+ expect_equal(a$base$partition,p)
+ expect_match(a$note,"not certify")
+})
+test_that("stored faces and wireframes preserve physical coordinates", {
+ skip_if_not_installed("plotly")
+ s <- vc_solid_cartesian(function(x)0,function(x)1,function(v)0,function(v)2,c(0,3),n=2,n_u=2,n_v=3)
+ p <- plotly::plotly_build(vc_plot_solid_cartesian(s))
+ expect_equal(length(p$x$data),6)
+ for(i in seq_len(6)) {
+ f <- s$faces[[i]];t <- p$x$data[[i]]
+ expect_equal(unname(t$x),f$x,ignore_attr=TRUE)
+ expect_equal(unname(t$y),f$y,ignore_attr=TRUE)
+ expect_equal(unname(t$z),f$z,ignore_attr=TRUE)
+ }
+ w <- plotly::plotly_build(vc_plot_solid_cartesian(s,"wireframe",faces="z_upper",wire_step=99))
+ expect_equal(length(w$x$data),1)
+ expect_true(all(w$x$data[[1]]$z[is.finite(w$x$data[[1]]$z)]==2))
+ expect_equal(range(w$x$data[[1]]$x,na.rm=TRUE),c(0,3))
+ expect_equal(range(w$x$data[[1]]$y,na.rm=TRUE),c(0,1))
+ expect_equal(length(plotly::plotly_build(vc_plot_solid_cartesian(s,"both"))$x$data),12)
+ expect_error(vc_plot_solid_cartesian(list()),"Invalid")
+ expect_error(vc_plot_solid_cartesian(s,faces="missing"),"selection")
+ expect_error(vc_plot_solid_cartesian(s,faces=c("x_min","x_min")),"selection")
+ expect_error(vc_plot_solid_cartesian(s,opacity=2))
+})

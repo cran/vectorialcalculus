@@ -1,0 +1,46 @@
+test_that("samples preserve traversal order and finite vector coordinates", {
+  f <- function(t)c(t,t^2,t^3)
+  r <- vc_curve_sample(f,c(2,-1),n=4)
+  expect_equal(r$samples,data.frame(t=2:-1,x=2:-1,y=(2:-1)^2,z=(2:-1)^3))
+  expect_equal(nrow(vc_curve_sample(f,c(1,1))$samples),1L)
+  expect_error(vc_curve_sample(function(t)c(t,Inf,0),c(0,1)),"three-vector")
+  expect_error(vc_curve_sample(function(t)c(t,0),c(0,1)),"three-vector")
+  expect_error(vc_curve_sample(f,c(0,1),n=2.5))
+  expect_error(vc_curve_sample(f,c(1e16,1e16+2),n=4),"representable")
+})
+
+test_that("spatial length integrates speed independently of traversal", {
+  f <- function(t)c(cos(t),sin(t),t)
+  v <- function(t)c(-sin(t),cos(t),1)
+  r <- vc_curve_length(f,c(2*pi,0),velocity=v)
+  expect_equal(r$estimate,2*pi*sqrt(2),tolerance=1e-8)
+  expect_equal(r$interval,c(0,2*pi))
+  expect_equal(r$derivative_source,"supplied")
+  expect_true(is.na(r$derivative_sensitivity_ok))
+  a <- vc_curve_length(function(t)c(t,2*t,2*t),c(0,1),method="simpson",n=4)
+  expect_equal(a$estimate,3,tolerance=1e-8)
+  expect_true(a$derivative_sensitivity_ok)
+  expect_equal(length(a$derivatives),nrow(a$samples))
+  expect_false(anyDuplicated(a$samples$t)>0)
+  expect_equal(vc_curve_length(function(t)stop("unexpected"),c(1,1))$estimate,0)
+  expect_equal(vc_curve_length(function(t)c(2,3,4),c(0,1))$estimate,0)
+  expect_error(vc_curve_length(f,c(0,1),velocity=function(t)c(1,2)),"three-vector")
+  expect_error(vc_curve_length(f,c(0,1),breaks=1),"interior")
+  # Known corner, split before integrating a piecewise velocity.
+  corner <- vc_curve_length(function(t)c(t,abs(t),0),c(-1,1),
+    velocity=function(t)c(1,sign(t),0),breaks=0)
+  expect_equal(corner$estimate,2*sqrt(2),tolerance=1e-8)
+})
+
+test_that("curve plots preserve stored coordinates and single-point visibility", {
+  skip_if_not_installed("plotly")
+  r <- vc_curve_sample(function(t)c(t,2*t,-t),c(1,0),n=5)
+  t <- plotly::plotly_build(vc_plot_curve(r,"lines+markers"))$x$data[[1]]
+  expect_equal(as.numeric(t$x),r$samples$x)
+  expect_equal(as.numeric(t$y),r$samples$y)
+  expect_equal(as.numeric(t$z),r$samples$z)
+  expect_equal(t$mode,"lines+markers")
+  r <- vc_curve_sample(function(t)c(t,t,t),c(1,1))
+  expect_equal(plotly::plotly_build(vc_plot_curve(r))$x$data[[1]]$mode,"markers")
+  expect_error(vc_plot_curve(list()),"Invalid curve")
+})

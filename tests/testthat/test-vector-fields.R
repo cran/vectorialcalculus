@@ -1,0 +1,65 @@
+test_that("field operators use the Cartesian Jacobian and correct signs", {
+  f <- function(p)c(2*p[1]-5*p[2]+3*p[3],p[1]+4*p[2]-2*p[3],
+    7*p[1]+9*p[2]-p[3])
+  p <- c(1,2,3)
+  div <- vc_divergence(f,p)
+  rot <- vc_curl(f,p)
+  expect_equal(div$estimate,5)
+  expect_equal(unname(rot$estimate),c(11,-4,6))
+  expect_true(div$reliable)
+  expect_true(all(rot$reliable))
+  expect_equal(dim(rot$refinements),c(3,3))
+  expect_equal(diag(div$jacobian$estimate),c(2,4,-1))
+  expect_equal(vc_divergence(function(p)c(2*p[1],3*p[2]),c(0,0))$estimate,5)
+  nonsmooth <- function(p)c(abs(p[2]),0,0)
+  expect_true(vc_divergence(nonsmooth,c(0,0,0),warn=FALSE)$reliable)
+  expect_warning(vc_curl(nonsmooth,c(0,0,0)),"sensitivity")
+  expect_error(vc_divergence(function(p)1,p),"length")
+  expect_error(vc_curl(identity,c(0,0)),"three")
+  expect_error(vc_curl(function(p)c(1,0,NA),p),"finite")
+})
+
+test_that("field samples follow nested bounds and preserve zero vectors", {
+  f <- function(p)c(-p[2],p[1],p[3])
+  result <- vc_vector_field_sample(f,function(x)0,identity,function(p)0,
+    function(p)1-sum(p)/2,c(0,1),n=2,n_u=1,n_v=1)
+  d <- result$samples
+  expect_equal(nrow(d),12)
+  expect_equal(d$x,rep(c(0,.5,1),each=4))
+  expect_equal(d$z[c(9,10,11,12)],c(0,.5,0,0))
+  expect_equal(d$u,-d$y)
+  expect_equal(d$v,d$x)
+  expect_equal(d$w,d$z)
+  expect_equal(d$magnitude,sqrt(d$u^2+d$v^2+d$w^2))
+  expect_error(vc_vector_field_sample(f,function(x)0,identity,function(p)2,
+    function(p)1,c(0,1),n=1,n_u=1,n_v=1),"bottom exceeds")
+})
+
+test_that("streamlines and pathlines distinguish time and preserve traversal", {
+  f <- function(p)c(-p[2],p[1],0)
+  s <- vc_streamline(f,c(1,0,0),c(0,pi/2),n=40)
+  expect_equal(s$samples$t[c(1,41)],c(0,pi/2))
+  expect_equal(unlist(s$samples[41,c("x","y","z")],use.names=FALSE),c(0,1,0),tolerance=1e-6)
+  expect_equal(s$samples$speed,rep(1,41),tolerance=1e-7)
+  backward <- vc_streamline(f,c(0,1,0),c(pi/2,0),n=40)
+  expect_equal(backward$samples$x[41],1,tolerance=1e-6)
+  timed <- vc_streamline(function(p,t)c(t,0,0),c(0,0,0),c(1,3),n=4,time_dependent=TRUE)
+  expect_equal(timed$samples$x,(timed$samples$t^2-1)/2)
+  expect_true(timed$time_dependent)
+  expect_equal(nrow(vc_streamline(f,c(0,0,0),c(2,2))$samples),1)
+  expect_error(vc_streamline(f,c(1,0,0),c(1,1+.Machine$double.eps),n=1),"midpoint")
+  expect_error(vc_streamline(function(p)c(0,0,Inf),c(0,0,0),c(0,1)),"finite")
+})
+
+test_that("stored arrows and trajectories render with physical directions", {
+  skip_if_not_installed("plotly")
+  f <- function(p)c(p[1],0,0)
+  d <- vc_vector_field_sample(f,function(x)0,function(x)0,function(p)0,
+    function(p)0,c(0,1),n=2,n_u=1,n_v=1)
+  s <- vc_streamline(function(p)c(1,0,0),c(0,0,0),c(0,1),n=2)
+  fig <- plotly::plotly_build(vc_plot_vector_field(d,s,scale=.5))
+  expect_equal(as.numeric(fig$x$data[[1]]$x[1:2]),c(.5,.75))
+  expect_equal(as.numeric(fig$x$data[[2]]$x),rep(0,4))
+  expect_equal(as.numeric(fig$x$data[[3]]$x),s$samples$x)
+  expect_identical(fig$x$layout$scene$aspectmode,"data")
+})

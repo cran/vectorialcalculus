@@ -1,0 +1,56 @@
+test_that("Stokes matches circulation and curl flux on a curved patch", {
+  patch <- function(p)c(p,sum(p^2))
+  j <- function(p)rbind(diag(2),2*p)
+  f <- function(p)c(-p[2]*p[3],p[1]*p[3],0)
+  curl <- function(p)c(-p[1],-p[2],2*p[3])
+  run <- function(orientation)vc_stokes(f,patch,c(0,1),c(0,2),j,curl,orientation,
+    n_boundary=4,n_outer=2,n_inner=2)
+  forward <- run("forward")
+  reverse <- run("reverse")
+  expect_equal(forward$circulation,40/3)
+  expect_equal(forward$curl_flux,40/3)
+  expect_true(forward$within_tolerance)
+  expect_equal(reverse$circulation,-40/3)
+  expect_equal(reverse$curl_flux,-40/3)
+  expect_identical(names(reverse$boundary),rev(names(forward$boundary)))
+  expect_equal(forward$boundary$v_min$samples$x[c(1,9)],c(0,1))
+  expect_equal(reverse$boundary$v_min$samples$x[c(1,9)],c(1,0))
+  expect_true(is.na(forward$derivative_sensitivity$curl))
+  expect_true(is.na(forward$derivative_sensitivity$surface))
+})
+
+test_that("Stokes retains numerical diagnostics and reports disagreement", {
+  patch <- function(p)c(p,sum(p))
+  f <- function(p)c(-p[2],p[1],0)
+  result <- vc_stokes(f,patch,c(0,1),c(0,1),h=c(.001,.002),curl_h=.001,
+    n_boundary=4,n_outer=2,n_inner=2)
+  expect_equal(result$circulation,2)
+  expect_equal(result$curl_flux,2)
+  expect_true(result$derivative_sensitivity$curl)
+  expect_true(result$derivative_sensitivity$surface)
+  expect_gt(result$derivative_sensitivity$curl_evaluations,0)
+  expect_true(all(result$derivative_sensitivity$boundary))
+  wrong <- vc_stokes(f,patch,c(0,1),c(0,1),curl=function(p)c(0,0,0),
+    n_boundary=4,n_outer=2,n_inner=2)
+  expect_false(wrong$within_tolerance)
+  expect_equal(wrong$difference,2)
+  expect_error(vc_stokes(f,patch,c(1,0),c(0,1)),"strictly increasing")
+  expect_error(vc_stokes(f,patch,c(0,1),c(0,1),jacobian=function(p)diag(3),
+    n_boundary=2),"3 by 2")
+})
+
+test_that("Stokes plots display stored traversal vectors", {
+  skip_if_not_installed("plotly")
+  patch <- function(p)c(p,sum(p))
+  f <- function(p)c(-p[2],p[1],0)
+  result <- vc_stokes(f,patch,c(0,1),c(0,1),orientation="reverse",
+    n_boundary=4,n_outer=2,n_inner=2)
+  s <- vc_surface_sample(patch,c(0,1),c(0,1),n_u=3,n_v=4)
+  p <- plotly::plotly_build(vc_plot_stokes(result,s))
+  types <- vapply(p$x$data,function(d)d$type,character(1))
+  expect_identical(types,c("surface",rep(c("scatter3d","cone"),4)))
+  expect_gt(as.numeric(p$x$data[[3]]$v),0)
+  expect_lt(as.numeric(p$x$data[[9]]$u),0)
+  expect_match(p$x$layout$annotations[[1]]$text,"Curl flux = -2")
+  expect_error(vc_plot_stokes(result,vc_surface_sample(patch,c(0,2),c(0,1))),"must match")
+})

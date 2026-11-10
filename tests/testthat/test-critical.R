@@ -1,0 +1,136 @@
+test_that("critical classification distinguishes mathematical criteria and nonsmoothness", {
+  cases <- list(list(function(x)x^2,"minimum","stationary_candidate"),
+                list(function(x)-x^2,"maximum","stationary_candidate"),
+                list(function(x)x^3,"not_extremum","stationary_candidate"),
+                list(function(x)x^4,"minimum","stationary_candidate"),
+                list(abs,"minimum","nonsmooth_candidate"),
+                list(function(x)1,"inconclusive","flat_candidate"))
+  for(case in cases) {
+    a <- vc_classify_critical(case[[1]],0)
+    expect_identical(a$classification,case[[2]])
+    expect_identical(a$kind,case[[3]])
+    expect_match(a$note,"not proved")
+  }
+  a <- vc_classify_critical(function(x)abs(x)^1.1,0)
+  expect_identical(a$kind,"stationary_candidate")
+  expect_identical(a$classification,"minimum")
+  a <- vc_classify_critical(function(x)x^4,0)
+  expect_match(a$evidence,"sign_test")
+  expect_true(abs(a$second_derivative$estimate)<1e-6)
+  expect_identical(vc_classify_critical(exp,0)$classification,"not_critical")
+  expect_identical(vc_classify_critical(function(x)if(x==0)0 else 1,0)$classification,"inconclusive")
+  expect_identical(vc_classify_critical(function(x)x^4,0,atol=1)$classification,"inconclusive")
+})
+
+test_that("critical searches recover isolated and even-multiplicity stationary candidates", {
+  f <- function(x)x^3-3*x
+  a <- f |> vc_critical_points(interval=c(-2,2),n=101)
+  expect_equal(a$points$x,c(-1,1),tolerance=1e-5)
+  expect_equal(a$points$classification,c("maximum","minimum"))
+  expect_true(all(abs(a$points$derivative)<=1e-6))
+  expect_false(a$complete)
+  expect_equal(a$boundary_samples$x,c(-2,2))
+  a <- vc_critical_points(function(x)(x-.123)^3,c(-1,1),n=80)
+  expect_true(any(abs(a$points$x-.123)<1e-5))
+  trig <- vc_critical_points(sin,c(-2*pi,2*pi),n=100)
+  expect_equal(trig$points$x,c(-3,-1,1,3)*pi/2,tolerance=1e-5)
+  a <- vc_critical_points(abs,c(-1,1),n=51)
+  expect_equal(a$points$kind,"nonsmooth_candidate")
+  expect_false(any(a$points$kind=="stationary_candidate"))
+  a <- vc_critical_points(function(x)1,c(-1,1),n=21)
+  expect_equal(nrow(a$points),0)
+  expect_equal(nrow(a$flat_intervals),1)
+  expect_equal(a$flat_intervals[c("lower","upper")],data.frame(lower=-1,upper=1))
+  expect_equal(nrow(vc_critical_points(exp,c(-1,1),n=21)$points),0)
+  high_order <- vc_critical_points(function(x)x^6,c(-1,1),n=81)
+  expect_true(any(abs(high_order$points$x)<1e-5))
+  expect_identical(vc_classify_critical(function(x)x^6,0,radius=.1)$classification,"minimum")
+  a <- vc_critical_points(log,c(0,2),n=21)
+  expect_true(is.na(a$scan$derivative[1]))
+  expect_equal(nrow(a$points),0)
+})
+
+test_that("classification/search reject invalid controls and retain invalid samples", {
+  expect_error(vc_classify_critical(sin,Inf),"finite real")
+  expect_error(vc_classify_critical(sin,0,radius=0),"radius")
+  expect_error(vc_classify_critical(sin,0,h2=-1),"h2")
+  expect_error(vc_classify_critical(sin,0,slope_tol=-1),"slope_tol")
+  expect_error(vc_critical_points(1,c(-1,1)),"function")
+  for(interval in list(c(1,0),c(-Inf,1),c(0,0),1i,c(-1e308,1e308)))
+    expect_error(vc_critical_points(sin,interval),"interval")
+  expect_error(vc_critical_points(sin,c(-1,1),n=4),"n")
+  expect_error(vc_critical_points(sin,c(-1,1),x_tol=0),"x_tol")
+  expect_error(vc_critical_points(sin,c(-1,1),h=0),"h")
+  expect_error(vc_critical_points(sin,c(-1,1),max_iter=0),"max_iter")
+  a <- vc_critical_points(function(x)if(x<0)NA_real_ else x,c(-1,1),n=21)
+  expect_true(anyNA(a$scan$value))
+  expect_equal(nrow(a$points),0)
+})
+
+test_that("concavity requires reliable curvature signs and true sign changes", {
+  a <- vc_concavity(function(x)x^3,c(-1,1),n=51)
+  expect_equal(a$inflections$x,0,tolerance=1e-7)
+  expect_equal(a$inflections$left_sign,-1L)
+  expect_equal(a$inflections$right_sign,1L)
+  expect_identical(a$scan$classification[1],"concave_down")
+  expect_identical(a$scan$classification[51],"concave_up")
+  expect_false(a$complete)
+  shifted <- vc_concavity(function(x)(x-.123)^3,c(-1,1),n=80)
+  expect_equal(shifted$inflections$x,.123,tolerance=1e-6)
+  a <- vc_concavity(function(x)x^4,c(-1,1),n=51)
+  expect_equal(nrow(a$inflections),0)
+  expect_true(nrow(a$rejected_candidates)>=1)
+  a <- vc_concavity(sin,c(-2,2),n=51)
+  expect_equal(a$inflections$x,0,tolerance=1e-6)
+  a <- vc_concavity(function(x)1/x,c(-1,1),n=51)
+  expect_equal(nrow(a$inflections),0)
+  expect_true(any(a$scan$classification=="unresolved"))
+  a <- vc_concavity(abs,c(-1,1),n=51)
+  expect_equal(nrow(a$inflections),0)
+  a <- vc_concavity(function(x)x*abs(x),c(-1,1),n=51)
+  expect_equal(nrow(a$inflections),0)
+  expect_equal(a$singular_candidates$x,0,tolerance=1e-7)
+  a <- vc_concavity(function(x)sign(x)*abs(x)^(1/3),c(-1,1),n=51)
+  expect_equal(a$singular_candidates$x,0,tolerance=1e-6)
+  a <- vc_concavity(function(x)if(x==0)0 else sign(x)+x^3,c(-1,1),n=51)
+  expect_equal(nrow(a$inflections)+nrow(a$singular_candidates),0)
+  expect_error(vc_concavity(sin,c(-1,1),h2=0),"h2")
+  expect_error(vc_concavity(sin,c(-1,1),atol=-1),"atol")
+})
+
+
+test_that("an optimization application has the known interior local maximum", {
+  volume <- function(x)x*(10-2*x)^2
+  a <- vc_critical_points(volume,c(0,5),n=81)
+  expect_equal(a$points$x,5/3,tolerance=1e-5)
+  expect_equal(a$points$value,2000/27,tolerance=1e-5)
+  expect_identical(a$points$classification,"maximum")
+  expect_equal(a$boundary_samples$value,c(0,0))
+  expect_identical(vc_critical_points(function(x)NA_real_,c(-1,1),n=5)$status,"no_evaluable_derivatives")
+  expect_identical(vc_concavity(function(x)NA_real_,c(-1,1),n=5)$status,"no_evaluable_curvature")
+  a <- vc_classify_critical(function(x)if(x<0)NA_real_ else sqrt(x),0)
+  expect_identical(a$kind,"unresolved")
+  expect_identical(a$classification,"inconclusive")
+})
+
+
+test_that("domain gaps are recorded without warning storms", {
+  expect_warning(a <- vc_critical_points(log,c(-1,2),n=21),NA)
+  expect_true(anyNA(a$scan$derivative))
+  expect_warning(wide <- vc_critical_points(identity,c(-2147483647L,2147483647L),n=5),NA)
+  expect_equal(wide$boundary_samples$value,c(-2147483647,2147483647))
+  expect_warning(b <- vc_concavity(log,c(-1,2),n=21),NA)
+  expect_true(any(b$scan$classification=="unresolved"))
+  expect_warning(c <- vc_newton(log,1e-8),NA)
+  expect_identical(c$status,"nonfinite_derivative")
+})
+
+
+test_that("refinement failures and discontinuous sign crossings are traceable", {
+  a <- vc_critical_points(function(x)(x-.123)^4,c(-1,1),n=5,x_tol=1e-14,max_iter=1)
+  expect_true(any(a$refinements$status=="refinement_error"))
+  jump <- function(x)if(x<0)-1 else 1
+  a <- .vc_root_scan(jump,seq(-1,1,length.out=5),1e-6,1e-8,100)
+  expect_length(a$roots,0)
+  expect_true(any(a$refinements$status=="residual_rejected"))
+})
